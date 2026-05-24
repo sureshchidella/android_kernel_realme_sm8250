@@ -25,6 +25,8 @@ jobs:
       - name: Clone Toolchain
         run: |
           git clone https://github.com/kdrag0n/proton-clang.git --depth=1 proton-clang
+          # Remove proton-clang's old GNU linker to prevent host tool compilation issues
+          rm -f proton-clang/bin/ld
 
       - name: Build Kernel
         run: |
