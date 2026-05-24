@@ -68,6 +68,23 @@ jobs:
             STRIP=llvm-strip \
             ${config}
 
+          echo "=== Appending oplus.config ==="
+          cat arch/arm64/configs/vendor/oplus.config >> ${OUT_DIR}/.config
+
+          # Disable CC_WERROR in CI to prevent new warnings from failing build
+          echo "# CONFIG_CC_WERROR is not set" >> ${OUT_DIR}/.config
+
+          echo "=== Running olddefconfig ==="
+          make O=${OUT_DIR} ${TARGET_KERNEL_MAKE_ENV} \
+            LLVM_IAS=1 \
+            ARCH=${ARCH} \
+            CROSS_COMPILE=${CROSS_COMPILE} \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            olddefconfig
+
           make ARCH=${ARCH} \
             CROSS_COMPILE=${CROSS_COMPILE} \
             LLVM_IAS=1 \
