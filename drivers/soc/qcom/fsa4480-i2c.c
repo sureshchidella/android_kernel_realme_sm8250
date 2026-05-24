@@ -55,7 +55,7 @@ struct fsa4480_priv {
 	struct blocking_notifier_head fsa4480_notifier;
 	struct mutex notification_lock;
 #ifdef OPLUS_ARCH_EXTENDS
-	unsigned int hs_det_pin;
+	int hs_det_pin;
 #endif /* OPLUS_ARCH_EXTENDS */
 };
 
@@ -489,6 +489,7 @@ static int fsa4480_parse_dt(struct fsa4480_priv *fsa_priv,
 	struct device *dev)
 {
 	struct device_node *dNode = dev->of_node;
+	int temp_gpio;
 	int ret = 0;
 
 	if (dNode == NULL)
@@ -499,18 +500,21 @@ static int fsa4480_parse_dt(struct fsa4480_priv *fsa_priv,
 		return -ENOMEM;
 	}
 
-	fsa_priv->hs_det_pin = of_get_named_gpio(dNode,
+	fsa_priv->hs_det_pin = -EINVAL;
+
+	temp_gpio = of_get_named_gpio(dNode,
 		"fsa4480,hs-det-gpio", 0);
-	if (!gpio_is_valid(fsa_priv->hs_det_pin)) {
+	if (!gpio_is_valid(temp_gpio)) {
 		pr_warning("%s: hs-det-gpio in dt node is missing\n", __func__);
 		return -ENODEV;
 	}
-	ret = gpio_request(fsa_priv->hs_det_pin, "fsa4480_hs_det");
+	ret = gpio_request(temp_gpio, "fsa4480_hs_det");
 	if (ret) {
 		pr_warning("%s: hs-det-gpio request fail\n", __func__);
 		return ret;
 	}
 
+	fsa_priv->hs_det_pin = temp_gpio;
 	gpio_direction_output(fsa_priv->hs_det_pin, 1);
 
 	return ret;
@@ -531,7 +535,9 @@ static int fsa4480_probe(struct i2c_client *i2c,
 	fsa_priv->dev = &i2c->dev;
 
 #ifdef OPLUS_ARCH_EXTENDS
-	fsa4480_parse_dt(fsa_priv, &i2c->dev);
+	rc = fsa4480_parse_dt(fsa_priv, &i2c->dev);
+	if (rc)
+		goto err_data;
 #endif /* OPLUS_ARCH_EXTENDS */
 
 	fsa_priv->usb_psy = power_supply_get_by_name("usb");
@@ -579,6 +585,12 @@ static int fsa4480_probe(struct i2c_client *i2c,
 err_supply:
 	power_supply_put(fsa_priv->usb_psy);
 err_data:
+#ifdef OPLUS_ARCH_EXTENDS
+	if (gpio_is_valid(fsa_priv->hs_det_pin)) {
+		gpio_free(fsa_priv->hs_det_pin);
+		fsa_priv->hs_det_pin = -EINVAL;
+	}
+#endif /* OPLUS_ARCH_EXTENDS */
 	devm_kfree(&i2c->dev, fsa_priv);
 	return rc;
 }
