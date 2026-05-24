@@ -264,16 +264,8 @@ jobs:
             echo "  Copied: dtbo.img"
           fi
 
-          echo "=== Creating flashable zip: ${ZIP_NAME}.zip ==="
-          cd AnyKernel3
-          zip -r9 "../${ZIP_NAME}.zip" . \
-            --exclude ".git/*" \
-            --exclude "README.md" \
-            --exclude "*.DS_Store"
-
-          cd ..
-          echo "=== Zip created ==="
-          ls -lah "${ZIP_NAME}.zip"
+          # Clean up git files and readmes so the artifact ZIP is clean
+          rm -rf AnyKernel3/.git AnyKernel3/README.md AnyKernel3/.github AnyKernel3/*.DS_Store
 
       # -----------------------------------------------------------------------
       # 11. Upload ONLY the kernel zip as artifact
@@ -282,7 +274,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ZIP_NAME }}
-          path: "${{ env.ZIP_NAME }}.zip"
+          path: AnyKernel3/
           if-no-files-found: error
           retention-days: 30
 
