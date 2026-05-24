@@ -1,0 +1,66 @@
+name: Build Kernel
+
+on:
+  push:
+    branches:
+      - Entropy-1.2
+  workflow_dispatch:
+
+env:
+  TZ: Asia/Kolkata
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential libelf-dev libssl-dev git bison flex ccache zip unzip curl lz4 liblz4-tool
+
+      - name: Clone Toolchain
+        run: |
+          git clone https://github.com/kdrag0n/proton-clang.git --depth=1 proton-clang
+
+      - name: Build Kernel
+        run: |
+          export PATH=$(pwd)/proton-clang/bin:$PATH
+          make O=out ARCH=arm64 vendor/kona-perf_defconfig
+          make O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- -j$(nproc)
+
+      - name: Package Kernel (AnyKernel3)
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3.git --depth=1 AnyKernel3
+          
+          # Copy built images (check what got compiled and copy it to AnyKernel3 folder)
+          if [ -f out/arch/arm64/boot/Image ]; then
+            cp out/arch/arm64/boot/Image AnyKernel3/
+          fi
+          if [ -f out/arch/arm64/boot/Image.gz ]; then
+            cp out/arch/arm64/boot/Image.gz AnyKernel3/
+          fi
+          if [ -f out/arch/arm64/boot/dtbo.img ]; then
+            cp out/arch/arm64/boot/dtbo.img AnyKernel3/
+          fi
+          if [ -f out/arch/arm64/boot/dtb ]; then
+            cp out/arch/arm64/boot/dtb AnyKernel3/
+          fi
+          
+          # Create flashable zip with files directly in the root of the ZIP
+          cd AnyKernel3
+          TIMESTAMP=$(date +'%Y%m%d%H%M')
+          ZIP_NAME="Entropy-tweak-v1.2-${TIMESTAMP}.zip"
+          zip -r9 "../${ZIP_NAME}" * -x .git* README.md *placeholder*
+          
+          # Save ZIP name to environment for the upload step
+          echo "ZIP_FILE_NAME=${ZIP_NAME}" >> $GITHUB_ENV
+
+      - name: Upload Kernel ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_FILE_NAME }}
+          path: ${{ env.ZIP_FILE_NAME }}

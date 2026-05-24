@@ -6741,6 +6741,12 @@ static int oplus_fg_update_soc_smooth_parameter(void)
 void oplus_set_float_uv_ma(int iterm_ma, int float_volt_uv)
 {
 	struct fg_dev *fg;
+
+	if (!fg_chip) {
+		pr_err("%s: fg_chip is NULL\n", __func__);
+		return;
+	}
+	fg = &fg_chip->fg;
 	fg->bp.float_volt_uv = float_volt_uv;
 }
 
