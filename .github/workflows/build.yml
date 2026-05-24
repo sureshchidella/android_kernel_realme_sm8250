@@ -14,312 +14,90 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      # -----------------------------------------------------------------------
-      # 1. Dependencies
-      # -----------------------------------------------------------------------
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            git curl wget zip unzip bc bison flex \
-            libssl-dev libelf-dev libncurses-dev \
-            build-essential python3 python-is-python3 \
-            cpio kmod rsync \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-            g++-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi \
-            zlib1g-dev
+    - name: Checkout kernel source
+      uses: actions/checkout@v4
 
-      # -----------------------------------------------------------------------
-      # 2. Clone sources
-      # -----------------------------------------------------------------------
-      - name: Checkout Kernel Source
-        uses: actions/checkout@v4
-        with:
-          path: kernel
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          bc bison build-essential flex git \
+          libssl-dev libelf-dev lld llvm \
+          python3 python-is-python3 \
+          zip unzip cpio rsync curl \
+          gcc g++ \
+          binutils-aarch64-linux-gnu
 
-      - name: Clone and Link ReSukiSU
-        run: |
-          git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git kernel/KernelSU
-          sed -i 's/\$(error TP hooks are incompatible/# \$(error TP hooks are incompatible/' kernel/KernelSU/kernel/Kbuild
-          python3 -c '
-          import os
-          path = "kernel/KernelSU/kernel/manager/pkg_observer.c"
-          if os.path.exists(path):
-              with open(path, "r") as f:
-                  lines = f.readlines()
-              new_content = """// SPDX-License-Identifier: GPL-2.0
-          #include <linux/module.h>
-          #include <linux/fs.h>
-          #include <linux/namei.h>
-          #include <linux/fsnotify_backend.h>
-          #include <linux/slab.h>
-          #include <linux/rculist.h>
-          #include <linux/version.h>
-          #include "klog.h"
-          #include "manager/throne_tracker.h"
+    - name: Clone Clang 20
+      run: |
+        git clone --depth=1 https://gitlab.com/provasishh/clang-20.git tc
 
-          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
-          """ + "".join(lines[11:]) + """
-          #else
-          int ksu_observer_init(void) { return 0; }
-          void ksu_observer_exit(void) {}
-          #endif
-          """
-              with open(path, "w") as f:
-                  f.write(new_content)
-              print("Patched pkg_observer.c successfully.")
-          '
-          ln -sf ../KernelSU/kernel kernel/drivers/kernelsu
+    - name: Setup ReSukiSU
+      run: |
+        curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
 
-      - name: Clone Clang 20
-        run: |
-          git clone --depth=1 \
-            https://gitlab.com/provasishh/clang-20.git \
-            clang
+    - name: Build & Package Kernel
+      run: |
+        echo "Cloning AnyKernel"
+        git clone https://github.com/yassshhhh15/AnyKernel3.git --depth=1 anykernel
 
-      - name: Clone AnyKernel3
-        run: |
-          git clone --depth=1 \
-            https://github.com/bijoyv9/AnyKernel3 \
-            AnyKernel3
+        DT=$(date +"%Y%m%d%H%M")
+        echo "DT=${DT}" >> $GITHUB_ENV
+        config=vendor/kona-perf_defconfig
 
-      # -----------------------------------------------------------------------
-      # 3. Verify clang layout
-      # -----------------------------------------------------------------------
-      - name: Verify Clang
-        run: |
-          CLANG_BIN=$PWD/clang/clang/bin
-          echo "=== Clang bin directory ==="
-          ls -la "$CLANG_BIN"
+        CROSS_COMPILE=$(pwd)/tc/aarch64-linux-android-4.9/bin/aarch64-linux-android-
+        KERNEL_ARCH=arm64
+        KERNEL_OUT=$(pwd)/out
+        export KERNEL_SRC=${KERNEL_OUT}
+        export CLANG_TRIPLE=aarch64-linux-gnu-
+        OUT_DIR=${KERNEL_OUT}
+        ARCH=${KERNEL_ARCH}
 
-          if [ ! -f "$CLANG_BIN/clang" ]; then
-            echo "ERROR: clang binary not found at $CLANG_BIN/clang"
-            exit 1
-          fi
+        TARGET_KERNEL_MAKE_ENV="CC=$(pwd)/tc/clang/bin/clang"
 
-          echo "=== Clang version ==="
-          "$CLANG_BIN/clang" --version
+        compile() {
+          echo "Compiling kernel..."
 
-          # Verify ld.lld and llvm-ar are present
-          for tool in ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip; do
-            if [ ! -f "$CLANG_BIN/$tool" ]; then
-              echo "WARNING: $tool not found, build may fail"
-            fi
-          done
-
-      # -----------------------------------------------------------------------
-      # 4. Set build environment variables
-      # -----------------------------------------------------------------------
-      - name: Set Build Variables
-        run: |
-          CLANG_BIN=$PWD/clang/clang/bin
-          BUILD_DATE=$(date +"%Y%m%d%H%M")
-          ZIP_NAME="Entropy-tweak-KSU-v1.2-${BUILD_DATE}"
-
-          echo "CLANG_BIN=$CLANG_BIN"                    >> $GITHUB_ENV
-          echo "BUILD_DATE=$BUILD_DATE"                  >> $GITHUB_ENV
-          echo "ZIP_NAME=$ZIP_NAME"                      >> $GITHUB_ENV
-          echo "ARCH=arm64"                              >> $GITHUB_ENV
-          echo "SUBARCH=arm64"                           >> $GITHUB_ENV
-          echo "KBUILD_BUILD_USER=Entropy"               >> $GITHUB_ENV
-          echo "KBUILD_BUILD_HOST=GitHub-CI"             >> $GITHUB_ENV
-
-          # Prepend Clang bin to PATH so sub-makes and helper scripts can find llvm-nm, llvm-ar, etc.
-          echo "$CLANG_BIN"                              >> $GITHUB_PATH
-
-          echo "ZIP will be: ${ZIP_NAME}.zip"
-
-      # -----------------------------------------------------------------------
-      # 5. Fix kernel build scripts
-      # -----------------------------------------------------------------------
-      - name: Fix Kernel Scripts
-        working-directory: kernel
-        run: |
-          if [ -f scripts/as-version.sh ]; then
-            sed -i 's#\.\./scripts/min-tool-version\.sh#scripts/min-tool-version.sh#g' \
-              scripts/as-version.sh
-            echo "Patched scripts/as-version.sh"
-          fi
-
-          if [ ! -f scripts/min-tool-version.sh ]; then
-            printf '#!/bin/sh\necho 0\n' > scripts/min-tool-version.sh
-            chmod +x scripts/min-tool-version.sh
-            echo "Created stub scripts/min-tool-version.sh"
-          fi
-
-          # Ensure python points to python3
-          if ! command -v python &>/dev/null; then
-            sudo ln -sf /usr/bin/python3 /usr/local/bin/python
-          fi
-
-      # -----------------------------------------------------------------------
-      # 6. Generate base defconfig
-      # -----------------------------------------------------------------------
-      - name: Generate Defconfig
-        working-directory: kernel
-        run: |
-          mkdir -p out
-
-          make O=out \
-            ARCH=arm64 \
-            CC=$CLANG_BIN/clang \
-            LD=$CLANG_BIN/ld.lld \
-            AR=$CLANG_BIN/llvm-ar \
-            NM=$CLANG_BIN/llvm-nm \
-            OBJCOPY=$CLANG_BIN/llvm-objcopy \
-            OBJDUMP=$CLANG_BIN/llvm-objdump \
-            STRIP=$CLANG_BIN/llvm-strip \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 \
+          make O=${OUT_DIR} ${TARGET_KERNEL_MAKE_ENV} \
             LLVM_IAS=1 \
-            HOSTCC=gcc \
-            HOSTCXX=g++ \
-            vendor/kona-perf_defconfig \
-            2>&1 | tee out/defconfig.log
+            ARCH=${ARCH} \
+            CROSS_COMPILE=${CROSS_COMPILE} \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            ${config}
 
-          echo "=== Generated .config (first 30 lines) ==="
-          head -30 out/.config
-
-      # -----------------------------------------------------------------------
-      # 7. Merge Oplus-specific config fragment
-      # -----------------------------------------------------------------------
-      - name: Merge Config Fragments
-        working-directory: kernel
-        run: |
-          echo "=== Appending oplus.config ==="
-          cat arch/arm64/configs/vendor/oplus.config >> out/.config
-
-          # Disable CC_WERROR in CI to prevent new warnings from failing build
-          echo "# CONFIG_CC_WERROR is not set" >> out/.config
-
-          echo "=== Running olddefconfig to resolve dependencies ==="
-          make O=out \
-            ARCH=arm64 \
-            CC=$CLANG_BIN/clang \
-            LD=$CLANG_BIN/ld.lld \
-            AR=$CLANG_BIN/llvm-ar \
-            NM=$CLANG_BIN/llvm-nm \
-            OBJCOPY=$CLANG_BIN/llvm-objcopy \
-            OBJDUMP=$CLANG_BIN/llvm-objdump \
-            STRIP=$CLANG_BIN/llvm-strip \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 \
+          make ARCH=${ARCH} \
+            CROSS_COMPILE=${CROSS_COMPILE} \
             LLVM_IAS=1 \
-            HOSTCC=gcc \
-            HOSTCXX=g++ \
-            olddefconfig \
-            2>&1 | tee -a out/defconfig.log
+            O=${OUT_DIR} \
+            ${TARGET_KERNEL_MAKE_ENV} \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            -j8
+        }
 
-          echo "=== Final config summary ==="
-          grep -E "^CONFIG_(CC_WERROR|LTO_CLANG|CFI_CLANG|SHADOW_CALL|NET_SCH_FQ|ZRAM|CRYPTO_LZ4HC)=" \
-            out/.config || true
-
-      # -----------------------------------------------------------------------
-      # 8. Build kernel
-      # -----------------------------------------------------------------------
-      - name: Build Kernel
-        working-directory: kernel
-        run: |
-          echo "=== Build started at $(date) ==="
-          echo "=== CPUs: $(nproc --all) ==="
-
-          make -j$(nproc --all) \
-            O=out \
-            ARCH=arm64 \
-            CC=$CLANG_BIN/clang \
-            LD=$CLANG_BIN/ld.lld \
-            AR=$CLANG_BIN/llvm-ar \
-            NM=$CLANG_BIN/llvm-nm \
-            OBJCOPY=$CLANG_BIN/llvm-objcopy \
-            OBJDUMP=$CLANG_BIN/llvm-objdump \
-            STRIP=$CLANG_BIN/llvm-strip \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LLVM=1 \
-            LLVM_IAS=1 \
-            HOSTCC=gcc \
-            HOSTCXX=g++ \
-            KBUILD_BUILD_USER=$KBUILD_BUILD_USER \
-            KBUILD_BUILD_HOST=$KBUILD_BUILD_HOST \
-            2>&1 | tee out/build.log
-
-          BUILD_EXIT=${PIPESTATUS[0]}
-          echo "=== Build finished at $(date) with exit code $BUILD_EXIT ==="
-          exit $BUILD_EXIT
-
-      # -----------------------------------------------------------------------
-      # 9. Verify output exists
-      # -----------------------------------------------------------------------
-      - name: Verify Build Output
-        run: |
-          echo "=== Boot directory ==="
-          ls -lah kernel/out/arch/arm64/boot/ || {
-            echo "ERROR: Boot directory missing — build failed!"
-            exit 1
-          }
-
-          # Require at least one kernel image
-          FOUND=0
-          for img in Image Image.gz Image.gz-dtb; do
-            if [ -f "kernel/out/arch/arm64/boot/$img" ]; then
-              echo "Found: $img ($(du -sh kernel/out/arch/arm64/boot/$img | cut -f1))"
-              FOUND=1
-            fi
-          done
-
-          if [ $FOUND -eq 0 ]; then
-            echo "ERROR: No kernel image produced!"
-            exit 1
+        copy_images() {
+          echo "Copying compiled images to AnyKernel..."
+          cp out/arch/arm64/boot/Image anykernel/
+          if [ -f out/arch/arm64/boot/dtbo.img ]; then
+            cp out/arch/arm64/boot/dtbo.img anykernel/
           fi
-
-      # -----------------------------------------------------------------------
-      # 10. Package with AnyKernel3
-      # -----------------------------------------------------------------------
-      - name: Package Kernel
-        run: |
-          BOOT_DIR=kernel/out/arch/arm64/boot
-
-          echo "=== Copying kernel images to AnyKernel3 ==="
-          for img in Image Image.gz Image.gz-dtb; do
-            if [ -f "$BOOT_DIR/$img" ]; then
-              cp "$BOOT_DIR/$img" AnyKernel3/
-              echo "  Copied: $img"
-            fi
-          done
-
-          if [ -f "$BOOT_DIR/dtbo.img" ]; then
-            cp "$BOOT_DIR/dtbo.img" AnyKernel3/
-            echo "  Copied: dtbo.img"
+          if [ -f out/arch/arm64/boot/dtb ]; then
+            cp out/arch/arm64/boot/dtb anykernel/
           fi
+          # Clean up Git folder and readme from anykernel directory
+          rm -rf anykernel/.git anykernel/README.md anykernel/.github anykernel/*.DS_Store
+        }
 
-          # Clean up git files and readmes so the artifact ZIP is clean
-          rm -rf AnyKernel3/.git AnyKernel3/README.md AnyKernel3/.github AnyKernel3/*.DS_Store
+        compile
+        copy_images
 
-      # -----------------------------------------------------------------------
-      # 11. Upload ONLY the kernel zip as artifact
-      # -----------------------------------------------------------------------
-      - name: Upload Kernel Zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ZIP_NAME }}
-          path: AnyKernel3/
-          if-no-files-found: error
-          retention-days: 30
-
-      # -----------------------------------------------------------------------
-      # 12. Upload build log on failure
-      # -----------------------------------------------------------------------
-      - name: Upload Build Log (on failure)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log-${{ env.BUILD_DATE }}
-          path: kernel/out/build.log
-          if-no-files-found: ignore
-          retention-days: 7
+    - name: Upload flashable zip
+      uses: actions/upload-artifact@v4
+      with:
+        name: Entropy-tweak-KSU-v1.2-${{ env.DT }}
+        path: anykernel/
