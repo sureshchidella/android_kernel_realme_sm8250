@@ -143,6 +143,7 @@ static int fsa4480_usbc_event_changed(struct notifier_block *nb,
 
 	switch (mode.intval) {
 	case POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER:
+	case POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY:
 	case POWER_SUPPLY_TYPEC_NONE:
 		if (atomic_read(&(fsa_priv->usbc_mode)) == mode.intval)
 			break; /* filter notifications received before */
@@ -190,6 +191,7 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 	switch (mode.intval) {
 	/* add all modes FSA should notify for in here */
 	case POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER:
+	case POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY:
 		/* activate switches */
 		fsa4480_usbc_update_settings(fsa_priv, 0x00, 0x9F);
 #ifdef OPLUS_ARCH_EXTENDS
@@ -293,6 +295,7 @@ int fsa4480_reg_notifier(struct notifier_block *nb,
 			"%s: Unable to read USB TYPEC_MODE: %d\n", __func__,
 			rc);
 	} else if ((mode.intval == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER) ||
+		   (mode.intval == POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY) ||
 		   (mode.intval == POWER_SUPPLY_TYPEC_NONE)) {
 		dev_info(fsa_priv->dev,
 			 "%s: initial state: supply mode %d, usbc mode %d\n",
@@ -350,7 +353,8 @@ int fsa4480_unreg_notifier(struct notifier_block *nb,
 		goto done;
 	}
 	/* Do not reset switch settings for usb digital hs */
-	if (mode.intval == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER)
+	if (mode.intval == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER ||
+	    mode.intval == POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY)
 		fsa4480_usbc_update_settings(fsa_priv, 0x18, 0x98);
 	rc = blocking_notifier_chain_unregister
 					(&fsa_priv->fsa4480_notifier, nb);
@@ -408,8 +412,8 @@ int fsa4480_switch_event(struct device_node *node,
 	switch (event) {
 	case FSA_MIC_GND_SWAP:
 #ifdef OPLUS_ARCH_EXTENDS
-		if (fsa_priv->usbc_mode.counter !=
-		    POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER) {
+		if (fsa_priv->usbc_mode.counter != POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER &&
+		    fsa_priv->usbc_mode.counter != POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY) {
 			regmap_read(fsa_priv->regmap, FSA4480_SWITCH_SETTINGS,
 				    &setting_reg_val);
 			regmap_read(fsa_priv->regmap, FSA4480_SWITCH_CONTROL,
