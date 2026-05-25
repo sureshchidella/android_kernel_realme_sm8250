@@ -19,5 +19,6 @@
 #define CONFIG_DRM_SDE_RSC 1
 //#ifdef OPLUS_BUG_STABILITY
 #define CONFIG_DRM_OPLUS 1
+#define CONFIG_DRM_OPLUS_NOTIFY 1
 //#endif
 
