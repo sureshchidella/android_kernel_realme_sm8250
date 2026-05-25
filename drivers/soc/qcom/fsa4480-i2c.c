@@ -127,8 +127,9 @@ static int fsa4480_usbc_event_changed(struct notifier_block *nb,
 		return -EINVAL;
 
 	if (psy && psy->desc) {
-		pr_info("%s: Received event: %lu from psy: %s (fsa_priv->usb_psy name: %s)\n",
-			__func__, evt, psy->desc->name,
+		pr_info("%s: Received event: %lu from psy name '%s' (addr: %p) (fsa_priv->usb_psy: %p, name: '%s')\n",
+			__func__, evt, psy->desc->name, psy,
+			fsa_priv->usb_psy,
 			fsa_priv->usb_psy && fsa_priv->usb_psy->desc ? fsa_priv->usb_psy->desc->name : "NULL");
 	}
 
@@ -139,29 +140,30 @@ static int fsa4480_usbc_event_changed(struct notifier_block *nb,
 	ret = power_supply_get_property(fsa_priv->usb_psy,
 			POWER_SUPPLY_PROP_TYPEC_MODE, &mode);
 	if (ret) {
-		dev_err(dev, "%s: Unable to read USB TYPEC_MODE: %d\n",
+		pr_err("%s: Unable to read USB TYPEC_MODE: %d\n",
 			__func__, ret);
 		return ret;
 	}
 
-	dev_dbg(dev, "%s: USB change event received, supply mode %d, usbc mode %d, expected %d\n",
-		__func__, mode.intval, fsa_priv->usbc_mode.counter,
-		POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER);
+	pr_info("%s: USB change event: mode.intval = %d, atomic_read(usbc_mode) = %d\n",
+		__func__, mode.intval, atomic_read(&(fsa_priv->usbc_mode)));
 
 	switch (mode.intval) {
 	case POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER:
 	case POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY:
 	case POWER_SUPPLY_TYPEC_NONE:
-		if (atomic_read(&(fsa_priv->usbc_mode)) == mode.intval)
+		if (atomic_read(&(fsa_priv->usbc_mode)) == mode.intval) {
+			pr_info("%s: mode %d unchanged, ignore\n", __func__, mode.intval);
 			break; /* filter notifications received before */
+		}
+		pr_info("%s: mode changed to %d, setting atomic and queueing work\n", __func__, mode.intval);
 		atomic_set(&(fsa_priv->usbc_mode), mode.intval);
 
-		dev_dbg(dev, "%s: queueing usbc_analog_work\n",
-			__func__);
 		pm_stay_awake(fsa_priv->dev);
 		queue_work(system_freezable_wq, &fsa_priv->usbc_analog_work);
 		break;
 	default:
+		pr_info("%s: mode %d ignored\n", __func__, mode.intval);
 		break;
 	}
 	return ret;
@@ -192,8 +194,7 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 			__func__, rc);
 		goto done;
 	}
-	dev_dbg(dev, "%s: setting GPIOs active = %d\n",
-		__func__, mode.intval != POWER_SUPPLY_TYPEC_NONE);
+	pr_info("%s: Entering setup switches, mode.intval = %d\n", __func__, mode.intval);
 
 	switch (mode.intval) {
 	/* add all modes FSA should notify for in here */
@@ -231,6 +232,7 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 #endif /* OPLUS_ARCH_EXTENDS */
 
 		/* notify call chain on event */
+		pr_info("%s: calling blocking_notifier_call_chain with mode %d\n", __func__, mode.intval);
 		blocking_notifier_call_chain(&fsa_priv->fsa4480_notifier,
 		mode.intval, NULL);
 #ifdef OPLUS_ARCH_EXTENDS
@@ -248,6 +250,7 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 		}
 #endif /* OPLUS_ARCH_EXTENDS */
 		/* notify call chain on event */
+		pr_info("%s: calling blocking_notifier_call_chain with POWER_SUPPLY_TYPEC_NONE\n", __func__);
 		blocking_notifier_call_chain(&fsa_priv->fsa4480_notifier,
 				POWER_SUPPLY_TYPEC_NONE, NULL);
 
