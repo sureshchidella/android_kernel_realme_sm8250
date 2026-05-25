@@ -1918,7 +1918,8 @@ static int wcd_mbhc_usbc_ana_event_handler(struct notifier_block *nb,
 		cancel_delayed_work_sync(&mbhc->mbhc_usbc_detect_dwork);
 #endif /* OPLUS_ARCH_EXTENDS */
 
-	if (mode == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER) {
+	if (mode == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER ||
+	    mode == POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY) {
 		if (mbhc->mbhc_cb->clk_setup)
 			mbhc->mbhc_cb->clk_setup(mbhc->component, true);
 		/* insertion detected, enable L_DET_EN */
@@ -1926,13 +1927,16 @@ static int wcd_mbhc_usbc_ana_event_handler(struct notifier_block *nb,
 #ifdef OPLUS_ARCH_EXTENDS
 		if (mbhc->use_usbc_detect)
 			wcd_mbhc_usbc_analog_plug_detect(mbhc, 1);
-	} else if (mode == POWER_SUPPLY_TYPEC_NONE && mbhc->use_usbc_detect) {
-		wcd_mbhc_usbc_analog_plug_detect(mbhc, 0);
+#endif /* OPLUS_ARCH_EXTENDS */
+	} else if (mode == POWER_SUPPLY_TYPEC_NONE) {
+#ifdef OPLUS_ARCH_EXTENDS
+		if (mbhc->use_usbc_detect)
+			wcd_mbhc_usbc_analog_plug_detect(mbhc, 0);
+#endif /* OPLUS_ARCH_EXTENDS */
 
 		WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_L_DET_EN, 0);
 		if (mbhc->mbhc_cb->clk_setup)
 			mbhc->mbhc_cb->clk_setup(mbhc->component, false);
-#endif /* OPLUS_ARCH_EXTENDS */
 	}
 	return 0;
 }
@@ -1964,7 +1968,8 @@ static void wcd_mbhc_usbc_ana_detect_work_fn(struct work_struct *work)
 
 	pr_info("%s: USB supply mode %d\n", __func__, mode.intval);
 
-	if (mode.intval == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER) {
+	if (mode.intval == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER ||
+	    mode.intval == POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY) {
 		if (mbhc->mbhc_cb->clk_setup)
 			mbhc->mbhc_cb->clk_setup(mbhc->component, true);
 		/* insertion detected, enable L_DET_EN */
