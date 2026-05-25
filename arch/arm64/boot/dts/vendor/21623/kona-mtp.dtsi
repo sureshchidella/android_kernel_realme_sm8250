@@ -1641,6 +1641,26 @@ board_temp-usr {
 };
 
 &pm8150_gpios {
+	dischg_enable: dischg_enable {
+		pins = "gpio9"; /* GPIO 9 */
+		function = "normal"; /* normal */
+		bias-disable; //No Pull
+		power-source = <0>;//VIN0 3.3
+		output-high; //digital output, no invert
+		qcom,drive-strength = <3>; //LOW strength
+		//drive-push-pull;//CMOS
+	};
+
+	dischg_disable: dischg_disable {
+		pins = "gpio9"; /* GPIO 9 */
+		function = "normal"; /* normal */
+		bias-disable; //No Pull
+		power-source = <0>;//VIN0 3.3
+		output-low; //digital output, no invert
+		qcom,drive-strength = <3>; //LOW strength
+		//drive-push-pull;//CMOS
+	};
+
 	mps_otg_en_active: mps_otg_en_active {
 		pins = "gpio3"; /* GPIO 3 */
 		function = "normal"; /* normal */
@@ -2355,6 +2375,7 @@ board_temp-usr {
 			qcom,chg_ctrl_by_camera;
 			qcom,sw_vfloat_over_protect_enable;
 			qcom,lpd-disable;
+			qcom,usbtemp_batttemp_gap = <15>;
 			//for PD9V or QC9V
 			qcom,vbatt_pdqc_to_5v_thr = <4100>;
 			oplus,pdqc_9v_voltage_adaptive;
@@ -2366,6 +2387,7 @@ board_temp-usr {
 			qcom,ship-gpio = <&tlmm 22 0x00>;
 			qcom,ccdetect-gpio = <&tlmm 14 0x00>;
 			//qcom,shortc-gpio = <&tlmm 43 0x00>;
+			qcom,dischg-gpio = <&pm8150_gpios 9 0x00>;
 			//qcom,charger_int-gpio = <&tlmm 15 0x00>;
 			//qcom,input_pg-gpio = <&tlmm 6 0x00>;
 			//qcom,charger_error-gpio = <&tlmm 118 0x00>;
@@ -2376,7 +2398,8 @@ board_temp-usr {
 							"ccdetect_active", "ccdetect_sleep",
 							"gpio1_adc_default","gpio8_adc_default","gpio5_adc_default",
 							"charger_int_default",
-							"input_pg_default";
+							"input_pg_default",
+							"dischg_enable", "dischg_disable";
 
 
 			pinctrl-0 = <&charger_error_default>;
@@ -2392,6 +2415,8 @@ board_temp-usr {
 			pinctrl-10 = <&gpio5_adc_default>;
 			pinctrl-11 = <&charger_int_default>;
 			pinctrl-12 = <&input_pg_default>;
+			pinctrl-13 = <&dischg_enable>;
+			pinctrl-14 = <&dischg_disable>;
 
 };
 //#endif //OPLUS_FEATURE_CHG_BASIC
