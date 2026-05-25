@@ -1152,6 +1152,26 @@
 //#endif
 
 &pm8150_gpios {
+	dischg_enable: dischg_enable {
+		pins = "gpio9"; /* GPIO 9 */
+		function = "normal"; /* normal */
+		bias-disable; //No Pull
+		power-source = <0>;//VIN0 3.3
+		output-high; //digital output, no invert
+		qcom,drive-strength = <3>; //LOW strength
+		//drive-push-pull;//CMOS
+	};
+
+	dischg_disable: dischg_disable {
+		pins = "gpio9"; /* GPIO 9 */
+		function = "normal"; /* normal */
+		bias-disable; //No Pull
+		power-source = <0>;//VIN0 3.3
+		output-low; //digital output, no invert
+		qcom,drive-strength = <3>; //LOW strength
+		//drive-push-pull;//CMOS
+	};
+
 	mps_otg_en_active: mps_otg_en_active {
 		pins = "gpio3"; /* GPIO 3 */
 		function = "normal"; /* normal */
@@ -1512,6 +1532,7 @@
 			qcom,ship-gpio = <&tlmm 22 0x00>;
 			qcom,ccdetect-gpio = <&tlmm 14 0x00>;
 			//qcom,shortc-gpio = <&tlmm 43 0x00>;
+			qcom,dischg-gpio = <&pm8150_gpios 9 0x00>;
 			//qcom,charger_int-gpio = <&tlmm 15 0x00>;
 			//qcom,input_pg-gpio = <&tlmm 6 0x00>;
 			//qcom,charger_error-gpio = <&tlmm 131 0x00>;
@@ -1520,6 +1541,7 @@
 							"chargerid_switch_active", "chargerid_switch_sleep", "chargerid_switch_default",
 							"ship_active", "ship_sleep",
 							"ccdetect_active", "ccdetect_sleep",
+							"dischg_enable", "dischg_disable",
 							"gpio1_adc_default","gpio8_adc_default","gpio5_adc_default",
 							"charger_int_default",
 							"input_pg_default",
@@ -1534,12 +1556,14 @@
 			pinctrl-5 = <&ship_sleep>;
 			pinctrl-6 = <&ccdetect_active>;
 			pinctrl-7 = <&ccdetect_sleep>;
-			pinctrl-8 = <&gpio1_adc_default>;
-			pinctrl-9 = <&gpio8_adc_default>;
-			pinctrl-10 = <&gpio5_adc_default>;
-			pinctrl-11 = <&charger_int_default>;
-			pinctrl-12 = <&input_pg_default>;
-			pinctrl-13 = <&charger_error_default>;
+			pinctrl-8 = <&dischg_enable>;
+			pinctrl-9 = <&dischg_disable>;
+			pinctrl-10 = <&gpio1_adc_default>;
+			pinctrl-11 = <&gpio8_adc_default>;
+			pinctrl-12 = <&gpio5_adc_default>;
+			pinctrl-13 = <&charger_int_default>;
+			pinctrl-14 = <&input_pg_default>;
+			pinctrl-15 = <&charger_error_default>;
 
 };
 //#endif //OPLUS_FEATURE_CHG_BASIC
