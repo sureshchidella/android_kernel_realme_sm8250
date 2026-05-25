@@ -1,8 +1,8 @@
 vendor := $(srctree)/$(src)
 
-ifneq "$(wildcard $(vendor)/qcom)" ""
-	subdir-y += qcom
-endif
+#ifneq "$(wildcard $(vendor)/qcom)" ""
+#	subdir-y += qcom
+#endif
 
 # realme SM8250 project
 subdir-y += 19795
