@@ -1911,7 +1911,7 @@ static int wcd_mbhc_usbc_ana_event_handler(struct notifier_block *nb,
 	if (!mbhc)
 		return -EINVAL;
 
-	dev_dbg(mbhc->component->dev, "%s: mode = %lu\n", __func__, mode);
+	pr_info("%s: mode = %lu\n", __func__, mode);
 
 #ifdef OPLUS_ARCH_EXTENDS
 	if (mbhc->use_usbc_detect)

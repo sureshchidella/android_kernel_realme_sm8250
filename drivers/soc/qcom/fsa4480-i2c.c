@@ -117,6 +117,7 @@ static int fsa4480_usbc_event_changed(struct notifier_block *nb,
 	struct fsa4480_priv *fsa_priv =
 			container_of(nb, struct fsa4480_priv, psy_nb);
 	struct device *dev;
+	struct power_supply *psy = (struct power_supply *)ptr;
 
 	if (!fsa_priv)
 		return -EINVAL;
@@ -125,7 +126,13 @@ static int fsa4480_usbc_event_changed(struct notifier_block *nb,
 	if (!dev)
 		return -EINVAL;
 
-	if ((struct power_supply *)ptr != fsa_priv->usb_psy ||
+	if (psy && psy->desc) {
+		pr_info("%s: Received event: %lu from psy: %s (fsa_priv->usb_psy name: %s)\n",
+			__func__, evt, psy->desc->name,
+			fsa_priv->usb_psy && fsa_priv->usb_psy->desc ? fsa_priv->usb_psy->desc->name : "NULL");
+	}
+
+	if (psy != fsa_priv->usb_psy ||
 				evt != PSY_EVENT_PROP_CHANGED)
 		return 0;
 
