@@ -39,7 +39,7 @@ jobs:
     - name: Build & Package Kernel
       run: |
         echo "Cloning AnyKernel"
-        git clone https://github.com/yassshhhh15/AnyKernel3.git --depth=1 anykernel
+        git clone https://github.com/bijoyv9/AnyKernel3.git --depth=1 anykernel
 
         DT=$(date +"%Y%m%d%H%M")
         echo "DT=${DT}" >> $GITHUB_ENV
