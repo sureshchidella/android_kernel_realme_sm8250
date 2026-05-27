@@ -691,6 +691,8 @@ struct smb_charger {
 	struct pinctrl *usbtemp_gpio5_adc_pinctrl;
 	struct pinctrl_state *usbtemp_gpio5_default;
 	struct delayed_work ccdetect_work;
+	struct delayed_work usb_plugin_work;
+	struct delayed_work typec_disconnect_work;
 	struct delayed_work wired_in_work;
 	struct delayed_work wait_wired_charge_on;
 	struct delayed_work wait_wired_charge_off;

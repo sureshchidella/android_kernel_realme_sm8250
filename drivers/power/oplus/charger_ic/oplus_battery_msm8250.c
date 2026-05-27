@@ -6741,6 +6741,19 @@ void smblib_usb_plugin_locked(struct smb_charger *chg)
 	smblib_dbg(chg, PR_INTERRUPT, "IRQ: usbin-plugin %s\n", vbus_rising ? "attached" : "detached");
 }
 
+#define USB_PLUGIN_DEBOUNCE_MS 150
+static void oplus_usb_plugin_debounce_work(struct work_struct *work)
+{
+	struct smb_charger *chg = container_of(work, struct smb_charger,
+						usb_plugin_work.work);
+
+	printk(KERN_ERR "[OPLUS_CHG][%s]: debounced usb_plugin firing\n", __func__);
+	if (chg->pd_hard_reset)
+		smblib_usb_plugin_hard_reset_locked(chg);
+	else
+		smblib_usb_plugin_locked(chg);
+}
+
 irqreturn_t usb_plugin_irq_handler(int irq, void *data)
 {
 	struct smb_irq_data *irq_data = data;
@@ -6758,10 +6771,12 @@ irqreturn_t usb_plugin_irq_handler(int irq, void *data)
 	}
 #endif /*OPLUS_FEATURE_CHG_BASIC*/
 
-	if (chg->pd_hard_reset)
-		smblib_usb_plugin_hard_reset_locked(chg);
-	else
-		smblib_usb_plugin_locked(chg);
+	/* Debounce: absorb rapid VBUS toggling during earphone CC bouncing.
+	 * Each new IRQ cancels the previous pending work, so only the
+	 * final settled VBUS state triggers smblib_usb_plugin_locked(). */
+	cancel_delayed_work(&chg->usb_plugin_work);
+	schedule_delayed_work(&chg->usb_plugin_work,
+			      msecs_to_jiffies(USB_PLUGIN_DEBOUNCE_MS));
 
 	return IRQ_HANDLED;
 }
@@ -7575,13 +7590,27 @@ irqreturn_t typec_state_change_irq_handler(int irq, void *data)
 #ifdef OPLUS_FEATURE_CHG_BASIC
 	if (chg->typec_mode != POWER_SUPPLY_TYPEC_NONE) {
 		cancel_delayed_work(&chg->typec_disable_cmd_work);
+		/* Connected: cancel any pending disconnect notification */
+		cancel_delayed_work(&chg->typec_disconnect_work);
 	}
 #endif
 
 	smblib_dbg(chg, PR_INTERRUPT, "IRQ: cc-state-change; Type-C %s detected\n",
 		   smblib_typec_mode_name[chg->typec_mode]);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	if (chg->typec_mode == POWER_SUPPLY_TYPEC_NONE) {
+		/* Defer disconnect notification to absorb CC line bouncing.
+		 * If the CC line recovers within 200ms, the notification is
+		 * cancelled and the USB/audio stack is never disturbed. */
+		schedule_delayed_work(&chg->typec_disconnect_work,
+				      msecs_to_jiffies(200));
+	} else {
+		power_supply_changed(chg->usb_psy);
+	}
+#else
 	power_supply_changed(chg->usb_psy);
+#endif
 
 	return IRQ_HANDLED;
 }
@@ -8302,6 +8331,17 @@ static void smblib_pr_lock_clear_work(struct work_struct *work)
 }
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
+static void oplus_typec_disconnect_work(struct work_struct *work)
+{
+	struct smb_charger *chg = container_of(work, struct smb_charger,
+					       typec_disconnect_work.work);
+
+	printk(KERN_ERR "[OPLUS_CHG][%s]: debounced typec disconnect firing\n", __func__);
+	if (chg->typec_mode == POWER_SUPPLY_TYPEC_NONE) {
+		power_supply_changed(chg->usb_psy);
+	}
+}
+
 static void oplus_ccdetect_work(struct work_struct *work)
 {
 	struct smb_charger *chg = container_of(work, struct smb_charger, ccdetect_work.work);
@@ -9413,6 +9453,8 @@ int smblib_init(struct smb_charger *chg)
 #ifdef OPLUS_FEATURE_CHG_BASIC
 	INIT_DELAYED_WORK(&chg->recovery_suspend_work, oplus_recovery_suspend_work);
 	INIT_DELAYED_WORK(&chg->ccdetect_work, oplus_ccdetect_work);
+	INIT_DELAYED_WORK(&chg->usb_plugin_work, oplus_usb_plugin_debounce_work);
+	INIT_DELAYED_WORK(&chg->typec_disconnect_work, oplus_typec_disconnect_work);
 	INIT_DELAYED_WORK(&usbtemp_recover_work, oplus_usbtemp_recover_work);
 	INIT_DELAYED_WORK(&chg->wired_in_work, oplus_wired_conn_int_work);
 	INIT_DELAYED_WORK(&chg->wait_wired_charge_on, oplus_wait_wired_charge_on_work);
