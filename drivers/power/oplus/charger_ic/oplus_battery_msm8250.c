@@ -7527,20 +7527,6 @@ irqreturn_t typec_state_change_irq_handler(int irq, void *data)
 	}
 #endif
 	typec_mode = smblib_get_prop_typec_mode(chg);
-	if (typec_mode != chg->typec_mode) {
-		/* Debounce disconnect: check if it reconnects to anything other than NONE within 3000ms */
-		if (typec_mode == POWER_SUPPLY_TYPEC_NONE && chg->typec_mode != POWER_SUPPLY_TYPEC_NONE) {
-			int i;
-			for (i = 0; i < 120; i++) {
-				msleep(25);
-				typec_mode = smblib_get_prop_typec_mode(chg);
-				if (typec_mode != POWER_SUPPLY_TYPEC_NONE) {
-					printk(KERN_ERR "[OPLUS_CHG][%s]: PMIC disconnect filtered by typec debounce!\n", __func__);
-					return IRQ_HANDLED;
-				}
-			}
-		}
-	}
 	if (chg->sink_src_mode != UNATTACHED_MODE && (typec_mode != chg->typec_mode))
 		smblib_handle_rp_change(chg, typec_mode);
 	chg->typec_mode = typec_mode;
@@ -7582,10 +7568,9 @@ irqreturn_t typec_state_change_irq_handler(int irq, void *data)
 #endif
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
-	if (chg->typec_present == false && gpio_get_value(chg->ccdetect_gpio) == 1)
-		if (oplus_ccdetect_get_power_role() != POWER_SUPPLY_TYPEC_PR_SINK &&
-		    oplus_get_otg_switch_status() == false)
-			oplus_ccdetect_disable();
+	/* CC role changes are handled exclusively by the debounced GPIO ccdetect_work.
+	 * Calling oplus_ccdetect_disable() here on transient PMIC disconnects
+	 * forces Sink-only mode and permanently kills USB-C earphone detection. */
 #endif
 #ifdef OPLUS_FEATURE_CHG_BASIC
 	if (chg->typec_mode != POWER_SUPPLY_TYPEC_NONE) {
@@ -8323,24 +8308,13 @@ static void oplus_ccdetect_work(struct work_struct *work)
 	int level;
 
 	level = gpio_get_value(chg->ccdetect_gpio);
+	printk(KERN_ERR "[OPLUS_CHG][%s]: ccdetect_work fired, gpio level=%d\n", __func__, level);
 	if (level != 1) {
 		oplus_ccdetect_enable();
 		oplus_wake_up_usbtemp_thread();
 	} else {
-		/* Debounce disconnect: check if it stays disconnected (level == 1) for 3000ms */
-		int debounce_count = 0;
-		while (debounce_count < 120) {
-			msleep(25);
-			level = gpio_get_value(chg->ccdetect_gpio);
-			if (level != 1) {
-				printk(KERN_ERR "[OPLUS_CHG][%s]: Disconnect filtered by ccdetect debounce!\n", __func__);
-				oplus_ccdetect_enable();
-				oplus_wake_up_usbtemp_thread();
-				return;
-			}
-			debounce_count++;
-		}
-
+		/* Debounce already applied: 2000ms delay in oplus_ccdetect_change_handler */
+		printk(KERN_ERR "[OPLUS_CHG][%s]: confirmed disconnect after debounce, disabling ccdetect\n", __func__);
 		oplus_chg_clear_abnormal_adapter_var();
 		if (oplus_ccdetect_get_power_role() != POWER_SUPPLY_TYPEC_PR_SINK &&
 		    oplus_get_otg_switch_status() == false)
@@ -10455,16 +10429,28 @@ int oplus_ccdetect_support_check(void)
 EXPORT_SYMBOL(oplus_ccdetect_support_check);
 #ifdef OPLUS_FEATURE_CHG_BASIC
 #define CCDETECT_DELAY_MS 50
+#define CCDETECT_DISCONNECT_DELAY_MS 2000
 irqreturn_t oplus_ccdetect_change_handler(int irq, void *data)
 {
 	struct oplus_chg_chip *chip = data;
 	struct smb_charger *chg = &chip->pmic_spmi.smb5_chip->chg;
+	int level = gpio_get_value(chg->ccdetect_gpio);
 
-	cancel_delayed_work_sync(&chg->ccdetect_work);
+	cancel_delayed_work(&chg->ccdetect_work);
 	vote(chg->awake_votable, CCDETECT_VOTER, true, 0);
-	//smblib_dbg(chg, PR_INTERRUPT, "Scheduling ccdetect work\n");
-	printk(KERN_ERR "[OPLUS_CHG][%s]: Scheduling ccdetect work!\n", __func__);
-	schedule_delayed_work(&chg->ccdetect_work, msecs_to_jiffies(CCDETECT_DELAY_MS));
+	if (level == 1) {
+		/* Physical disconnect: debounce 2000ms before acting */
+		printk(KERN_ERR "[OPLUS_CHG][%s]: level=1 (disconnect), debounce %dms\n",
+		       __func__, CCDETECT_DISCONNECT_DELAY_MS);
+		schedule_delayed_work(&chg->ccdetect_work,
+				      msecs_to_jiffies(CCDETECT_DISCONNECT_DELAY_MS));
+	} else {
+		/* Physical connect: act quickly */
+		printk(KERN_ERR "[OPLUS_CHG][%s]: level=0 (connect), scheduling %dms\n",
+		       __func__, CCDETECT_DELAY_MS);
+		schedule_delayed_work(&chg->ccdetect_work,
+				      msecs_to_jiffies(CCDETECT_DELAY_MS));
+	}
 	return IRQ_HANDLED;
 }
 #endif /* OPLUS_FEATURE_CHG_BASIC */
