@@ -7528,11 +7528,11 @@ irqreturn_t typec_state_change_irq_handler(int irq, void *data)
 #endif
 	typec_mode = smblib_get_prop_typec_mode(chg);
 	if (typec_mode != chg->typec_mode) {
-		/* Debounce disconnect: check if it reconnects to anything other than NONE within 1000ms */
+		/* Debounce disconnect: check if it reconnects to anything other than NONE within 3000ms */
 		if (typec_mode == POWER_SUPPLY_TYPEC_NONE && chg->typec_mode != POWER_SUPPLY_TYPEC_NONE) {
 			int i;
-			for (i = 0; i < 20; i++) {
-				msleep(50);
+			for (i = 0; i < 120; i++) {
+				msleep(25);
 				typec_mode = smblib_get_prop_typec_mode(chg);
 				if (typec_mode != POWER_SUPPLY_TYPEC_NONE) {
 					printk(KERN_ERR "[OPLUS_CHG][%s]: PMIC disconnect filtered by typec debounce!\n", __func__);
@@ -8327,10 +8327,10 @@ static void oplus_ccdetect_work(struct work_struct *work)
 		oplus_ccdetect_enable();
 		oplus_wake_up_usbtemp_thread();
 	} else {
-		/* Debounce disconnect: check if it stays disconnected (level == 1) for 1000ms */
+		/* Debounce disconnect: check if it stays disconnected (level == 1) for 3000ms */
 		int debounce_count = 0;
-		while (debounce_count < 20) {
-			msleep(50);
+		while (debounce_count < 120) {
+			msleep(25);
 			level = gpio_get_value(chg->ccdetect_gpio);
 			if (level != 1) {
 				printk(KERN_ERR "[OPLUS_CHG][%s]: Disconnect filtered by ccdetect debounce!\n", __func__);
