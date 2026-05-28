@@ -43,7 +43,7 @@ static ssize_t force_120hz_store(struct device *dev, struct device_attribute *at
 	oplus_force_120hz = !!val;
 	return count;
 }
-static DEVICE_ATTR(force_120hz, 0666, force_120hz_show, force_120hz_store);
+static DEVICE_ATTR(force_120hz, 0644, force_120hz_show, force_120hz_store);
 
 struct oplus_apollo_backlight_list *p_apollo_backlight = NULL;
 static int oplus_display_set_apollo_backlight_value(void *data);
