@@ -6741,7 +6741,7 @@ void smblib_usb_plugin_locked(struct smb_charger *chg)
 	smblib_dbg(chg, PR_INTERRUPT, "IRQ: usbin-plugin %s\n", vbus_rising ? "attached" : "detached");
 }
 
-#define USB_PLUGIN_DEBOUNCE_MS 150
+#define USB_PLUGIN_DEBOUNCE_MS 1500
 static void oplus_usb_plugin_debounce_work(struct work_struct *work)
 {
 	struct smb_charger *chg = container_of(work, struct smb_charger,
@@ -7601,10 +7601,10 @@ irqreturn_t typec_state_change_irq_handler(int irq, void *data)
 #ifdef OPLUS_FEATURE_CHG_BASIC
 	if (chg->typec_mode == POWER_SUPPLY_TYPEC_NONE) {
 		/* Defer disconnect notification to absorb CC line bouncing.
-		 * If the CC line recovers within 200ms, the notification is
+		 * If the CC line recovers within 1500ms, the notification is
 		 * cancelled and the USB/audio stack is never disturbed. */
 		schedule_delayed_work(&chg->typec_disconnect_work,
-				      msecs_to_jiffies(200));
+				      msecs_to_jiffies(1500));
 	} else {
 		power_supply_changed(chg->usb_psy);
 	}
