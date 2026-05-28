@@ -55,7 +55,7 @@ struct fsa4480_priv {
 	struct blocking_notifier_head fsa4480_notifier;
 	struct mutex notification_lock;
 #ifdef OPLUS_ARCH_EXTENDS
-	int hs_det_pin;
+	unsigned int hs_det_pin;
 #endif /* OPLUS_ARCH_EXTENDS */
 };
 
@@ -117,7 +117,6 @@ static int fsa4480_usbc_event_changed(struct notifier_block *nb,
 	struct fsa4480_priv *fsa_priv =
 			container_of(nb, struct fsa4480_priv, psy_nb);
 	struct device *dev;
-	struct power_supply *psy = (struct power_supply *)ptr;
 
 	if (!fsa_priv)
 		return -EINVAL;
@@ -126,44 +125,35 @@ static int fsa4480_usbc_event_changed(struct notifier_block *nb,
 	if (!dev)
 		return -EINVAL;
 
-	if (psy && psy->desc) {
-		pr_info("%s: Received event: %lu from psy name '%s' (addr: %p) (fsa_priv->usb_psy: %p, name: '%s')\n",
-			__func__, evt, psy->desc->name, psy,
-			fsa_priv->usb_psy,
-			fsa_priv->usb_psy && fsa_priv->usb_psy->desc ? fsa_priv->usb_psy->desc->name : "NULL");
-	}
-
-	if (psy != fsa_priv->usb_psy ||
+	if ((struct power_supply *)ptr != fsa_priv->usb_psy ||
 				evt != PSY_EVENT_PROP_CHANGED)
 		return 0;
 
 	ret = power_supply_get_property(fsa_priv->usb_psy,
 			POWER_SUPPLY_PROP_TYPEC_MODE, &mode);
 	if (ret) {
-		pr_err("%s: Unable to read USB TYPEC_MODE: %d\n",
+		dev_err(dev, "%s: Unable to read USB TYPEC_MODE: %d\n",
 			__func__, ret);
 		return ret;
 	}
 
-	pr_info("%s: USB change event: mode.intval = %d, atomic_read(usbc_mode) = %d\n",
-		__func__, mode.intval, atomic_read(&(fsa_priv->usbc_mode)));
+	dev_dbg(dev, "%s: USB change event received, supply mode %d, usbc mode %d, expected %d\n",
+		__func__, mode.intval, fsa_priv->usbc_mode.counter,
+		POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER);
 
 	switch (mode.intval) {
 	case POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER:
-	case POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY:
 	case POWER_SUPPLY_TYPEC_NONE:
-		if (atomic_read(&(fsa_priv->usbc_mode)) == mode.intval) {
-			pr_info("%s: mode %d unchanged, ignore\n", __func__, mode.intval);
+		if (atomic_read(&(fsa_priv->usbc_mode)) == mode.intval)
 			break; /* filter notifications received before */
-		}
-		pr_info("%s: mode changed to %d, setting atomic and queueing work\n", __func__, mode.intval);
 		atomic_set(&(fsa_priv->usbc_mode), mode.intval);
 
+		dev_dbg(dev, "%s: queueing usbc_analog_work\n",
+			__func__);
 		pm_stay_awake(fsa_priv->dev);
 		queue_work(system_freezable_wq, &fsa_priv->usbc_analog_work);
 		break;
 	default:
-		pr_info("%s: mode %d ignored\n", __func__, mode.intval);
 		break;
 	}
 	return ret;
@@ -194,12 +184,12 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 			__func__, rc);
 		goto done;
 	}
-	pr_info("%s: Entering setup switches, mode.intval = %d\n", __func__, mode.intval);
+	dev_dbg(dev, "%s: setting GPIOs active = %d\n",
+		__func__, mode.intval != POWER_SUPPLY_TYPEC_NONE);
 
 	switch (mode.intval) {
 	/* add all modes FSA should notify for in here */
 	case POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER:
-	case POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY:
 		/* activate switches */
 		fsa4480_usbc_update_settings(fsa_priv, 0x00, 0x9F);
 #ifdef OPLUS_ARCH_EXTENDS
@@ -232,7 +222,6 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 #endif /* OPLUS_ARCH_EXTENDS */
 
 		/* notify call chain on event */
-		pr_info("%s: calling blocking_notifier_call_chain with mode %d\n", __func__, mode.intval);
 		blocking_notifier_call_chain(&fsa_priv->fsa4480_notifier,
 		mode.intval, NULL);
 #ifdef OPLUS_ARCH_EXTENDS
@@ -250,7 +239,6 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 		}
 #endif /* OPLUS_ARCH_EXTENDS */
 		/* notify call chain on event */
-		pr_info("%s: calling blocking_notifier_call_chain with POWER_SUPPLY_TYPEC_NONE\n", __func__);
 		blocking_notifier_call_chain(&fsa_priv->fsa4480_notifier,
 				POWER_SUPPLY_TYPEC_NONE, NULL);
 
@@ -305,7 +293,6 @@ int fsa4480_reg_notifier(struct notifier_block *nb,
 			"%s: Unable to read USB TYPEC_MODE: %d\n", __func__,
 			rc);
 	} else if ((mode.intval == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER) ||
-		   (mode.intval == POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY) ||
 		   (mode.intval == POWER_SUPPLY_TYPEC_NONE)) {
 		dev_info(fsa_priv->dev,
 			 "%s: initial state: supply mode %d, usbc mode %d\n",
@@ -363,8 +350,7 @@ int fsa4480_unreg_notifier(struct notifier_block *nb,
 		goto done;
 	}
 	/* Do not reset switch settings for usb digital hs */
-	if (mode.intval == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER ||
-	    mode.intval == POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY)
+	if (mode.intval == POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER)
 		fsa4480_usbc_update_settings(fsa_priv, 0x18, 0x98);
 	rc = blocking_notifier_chain_unregister
 					(&fsa_priv->fsa4480_notifier, nb);
@@ -422,8 +408,8 @@ int fsa4480_switch_event(struct device_node *node,
 	switch (event) {
 	case FSA_MIC_GND_SWAP:
 #ifdef OPLUS_ARCH_EXTENDS
-		if (fsa_priv->usbc_mode.counter != POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER &&
-		    fsa_priv->usbc_mode.counter != POWER_SUPPLY_TYPEC_SINK_DEBUG_ACCESSORY) {
+		if (fsa_priv->usbc_mode.counter !=
+		    POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER) {
 			regmap_read(fsa_priv->regmap, FSA4480_SWITCH_SETTINGS,
 				    &setting_reg_val);
 			regmap_read(fsa_priv->regmap, FSA4480_SWITCH_CONTROL,
@@ -503,7 +489,6 @@ static int fsa4480_parse_dt(struct fsa4480_priv *fsa_priv,
 	struct device *dev)
 {
 	struct device_node *dNode = dev->of_node;
-	int temp_gpio;
 	int ret = 0;
 
 	if (dNode == NULL)
@@ -514,21 +499,18 @@ static int fsa4480_parse_dt(struct fsa4480_priv *fsa_priv,
 		return -ENOMEM;
 	}
 
-	fsa_priv->hs_det_pin = -EINVAL;
-
-	temp_gpio = of_get_named_gpio(dNode,
+	fsa_priv->hs_det_pin = of_get_named_gpio(dNode,
 		"fsa4480,hs-det-gpio", 0);
-	if (!gpio_is_valid(temp_gpio)) {
+	if (!gpio_is_valid(fsa_priv->hs_det_pin)) {
 		pr_warning("%s: hs-det-gpio in dt node is missing\n", __func__);
 		return -ENODEV;
 	}
-	ret = gpio_request(temp_gpio, "fsa4480_hs_det");
+	ret = gpio_request(fsa_priv->hs_det_pin, "fsa4480_hs_det");
 	if (ret) {
 		pr_warning("%s: hs-det-gpio request fail\n", __func__);
 		return ret;
 	}
 
-	fsa_priv->hs_det_pin = temp_gpio;
 	gpio_direction_output(fsa_priv->hs_det_pin, 1);
 
 	return ret;
@@ -549,9 +531,7 @@ static int fsa4480_probe(struct i2c_client *i2c,
 	fsa_priv->dev = &i2c->dev;
 
 #ifdef OPLUS_ARCH_EXTENDS
-	rc = fsa4480_parse_dt(fsa_priv, &i2c->dev);
-	if (rc)
-		goto err_data;
+	fsa4480_parse_dt(fsa_priv, &i2c->dev);
 #endif /* OPLUS_ARCH_EXTENDS */
 
 	fsa_priv->usb_psy = power_supply_get_by_name("usb");
@@ -599,12 +579,6 @@ static int fsa4480_probe(struct i2c_client *i2c,
 err_supply:
 	power_supply_put(fsa_priv->usb_psy);
 err_data:
-#ifdef OPLUS_ARCH_EXTENDS
-	if (gpio_is_valid(fsa_priv->hs_det_pin)) {
-		gpio_free(fsa_priv->hs_det_pin);
-		fsa_priv->hs_det_pin = -EINVAL;
-	}
-#endif /* OPLUS_ARCH_EXTENDS */
 	devm_kfree(&i2c->dev, fsa_priv);
 	return rc;
 }
