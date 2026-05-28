@@ -31,7 +31,7 @@ static ssize_t profile_store(struct kobject *kobj, struct kobj_attribute *attr, 
 }
 
 static struct kobj_attribute profile_attribute =
-	__ATTR(profile, 0666, profile_show, profile_store);
+	__ATTR(profile, 0644, profile_show, profile_store);
 
 static struct attribute *spectrum_attrs[] = {
 	&profile_attribute.attr,
