@@ -10,6 +10,12 @@
 #include "msm_kms.h"
 #include "sde_connector.h"
 #include "dsi_drm.h"
+#include "dsi_panel.h"
+#include "dsi_clk.h"
+
+#ifdef CONFIG_OPLUS_DISPLAY
+extern int oplus_force_120hz;
+#endif
 #include "sde_trace.h"
 #include "sde_dbg.h"
 
@@ -941,6 +947,13 @@ int dsi_connector_get_modes(struct drm_connector *connector, void *data,
 			/* set the first mode in list as preferred */
 			m->type |= DRM_MODE_TYPE_PREFERRED;
 		}
+
+#ifdef CONFIG_OPLUS_DISPLAY
+		if (oplus_force_120hz && drm_mode_vrefresh(m) < 120 && drm_mode_vrefresh(m) > 0) {
+			drm_mode_destroy(connector->dev, m);
+			continue;
+		}
+#endif
 		drm_mode_probed_add(connector, m);
 	}
 

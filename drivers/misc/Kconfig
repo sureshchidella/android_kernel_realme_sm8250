@@ -670,6 +670,12 @@ source "drivers/misc/qrc/Kconfig"
 
 source "drivers/misc/aw8697_haptic/Kconfig"
 source "drivers/misc/tri_state_key/Kconfig"
+config SPECTRUM
+	tristate "Spectrum Profile Support"
+	default y
+	help
+	  Exposes a sysfs node for Spectrum profile management.
+
 endmenu
 
 config OKL4_USER_VIPC

@@ -27,6 +27,24 @@
 #include "oplus_adfr.h"
 #endif
 
+int oplus_force_120hz = 0;
+EXPORT_SYMBOL(oplus_force_120hz);
+
+static ssize_t force_120hz_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", oplus_force_120hz);
+}
+
+static ssize_t force_120hz_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	int val;
+	if (kstrtoint(buf, 10, &val))
+		return -EINVAL;
+	oplus_force_120hz = !!val;
+	return count;
+}
+static DEVICE_ATTR(force_120hz, 0666, force_120hz_show, force_120hz_store);
+
 struct oplus_apollo_backlight_list *p_apollo_backlight = NULL;
 static int oplus_display_set_apollo_backlight_value(void *data);
 
@@ -514,6 +532,8 @@ static int __init oplus_display_panel_init(void)
 		pr_err("%s device create error\n", __func__);
 		goto err_device_create;
 	}
+	
+	device_create_file(panel_dev, &dev_attr_force_120hz);
 
 	rc = oplus_export_dmabuf(APOLLO_BACKLIGHT_LENS);
 	if (rc < 0) {
