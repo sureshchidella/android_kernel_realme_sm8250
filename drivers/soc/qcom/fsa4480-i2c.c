@@ -51,7 +51,7 @@ struct fsa4480_priv {
 	struct power_supply *usb_psy;
 	struct notifier_block psy_nb;
 	atomic_t usbc_mode;
-	struct work_struct usbc_analog_work;
+	struct delayed_work usbc_analog_work;
 	struct blocking_notifier_head fsa4480_notifier;
 	struct mutex notification_lock;
 #ifdef OPLUS_ARCH_EXTENDS
@@ -143,17 +143,53 @@ static int fsa4480_usbc_event_changed(struct notifier_block *nb,
 
 	switch (mode.intval) {
 	case POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER:
+		if (atomic_read(&(fsa_priv->usbc_mode)) == mode.intval)
+			break; /* filter notifications received before */
+		atomic_set(&(fsa_priv->usbc_mode), mode.intval);
+
+		dev_dbg(dev, "%s: audio adapter detected, queueing immediately\n",
+			__func__);
+		pm_stay_awake(fsa_priv->dev);
+		mod_delayed_work(system_freezable_wq,
+				 &fsa_priv->usbc_analog_work, 0);
+		break;
 	case POWER_SUPPLY_TYPEC_NONE:
 		if (atomic_read(&(fsa_priv->usbc_mode)) == mode.intval)
 			break; /* filter notifications received before */
 		atomic_set(&(fsa_priv->usbc_mode), mode.intval);
 
-		dev_dbg(dev, "%s: queueing usbc_analog_work\n",
+		/*
+		 * Debounce disconnect by 1000ms: earphone wiggles during
+		 * gaming cause transient TYPEC_NONE events. If the audio
+		 * adapter reconnects within the delay, mod_delayed_work()
+		 * above cancels this pending work and audio is never cut.
+		 */
+		dev_dbg(dev, "%s: disconnect detected, debouncing 1000ms\n",
 			__func__);
 		pm_stay_awake(fsa_priv->dev);
-		queue_work(system_freezable_wq, &fsa_priv->usbc_analog_work);
+		mod_delayed_work(system_freezable_wq,
+				 &fsa_priv->usbc_analog_work,
+				 msecs_to_jiffies(1000));
 		break;
 	default:
+		/*
+		 * All other modes (SOURCE_DEFAULT, SOURCE_MEDIUM,
+		 * SOURCE_HIGH, etc.) indicate a USB data connection
+		 * (laptop, charger, OTG). Force the switch into USB
+		 * data mode immediately so the analog audio path is
+		 * deactivated and USB enumeration can proceed.
+		 */
+		if (atomic_read(&(fsa_priv->usbc_mode)) ==
+				POWER_SUPPLY_TYPEC_NONE)
+			break; /* already in USB mode, skip */
+		atomic_set(&(fsa_priv->usbc_mode),
+			   POWER_SUPPLY_TYPEC_NONE);
+
+		dev_dbg(dev, "%s: USB data mode %d, switching immediately\n",
+			__func__, mode.intval);
+		pm_stay_awake(fsa_priv->dev);
+		mod_delayed_work(system_freezable_wq,
+				 &fsa_priv->usbc_analog_work, 0);
 		break;
 	}
 	return ret;
@@ -246,7 +282,12 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 		fsa4480_usbc_update_settings(fsa_priv, 0x18, 0x98);
 		break;
 	default:
-		/* ignore other usb connection modes */
+		/*
+		 * For all other USB modes (SOURCE_DEFAULT for laptops,
+		 * chargers, OTG, etc.), ensure the analog switch is
+		 * deactivated so USB data lines are not blocked.
+		 */
+		fsa4480_usbc_update_settings(fsa_priv, 0x18, 0x98);
 		break;
 	}
 
@@ -465,7 +506,8 @@ EXPORT_SYMBOL(fsa4480_switch_event);
 static void fsa4480_usbc_analog_work_fn(struct work_struct *work)
 {
 	struct fsa4480_priv *fsa_priv =
-		container_of(work, struct fsa4480_priv, usbc_analog_work);
+		container_of(to_delayed_work(work),
+			     struct fsa4480_priv, usbc_analog_work);
 
 	if (!fsa_priv) {
 		pr_err("%s: fsa container invalid\n", __func__);
@@ -569,10 +611,17 @@ static int fsa4480_probe(struct i2c_client *i2c,
 	mutex_init(&fsa_priv->notification_lock);
 	i2c_set_clientdata(i2c, fsa_priv);
 
-	INIT_WORK(&fsa_priv->usbc_analog_work,
-		  fsa4480_usbc_analog_work_fn);
+	INIT_DELAYED_WORK(&fsa_priv->usbc_analog_work,
+			  fsa4480_usbc_analog_work_fn);
 
 	BLOCKING_INIT_NOTIFIER_HEAD(&fsa_priv->fsa4480_notifier);
+
+	/*
+	 * Initialize the switch to USB data mode (0x18, 0x98) at boot.
+	 * This guarantees USB connectivity from a cold start before any
+	 * power_supply notification arrives.
+	 */
+	fsa4480_usbc_update_settings(fsa_priv, 0x18, 0x98);
 
 	return 0;
 
@@ -592,7 +641,7 @@ static int fsa4480_remove(struct i2c_client *i2c)
 		return -EINVAL;
 
 	fsa4480_usbc_update_settings(fsa_priv, 0x18, 0x98);
-	cancel_work_sync(&fsa_priv->usbc_analog_work);
+	cancel_delayed_work_sync(&fsa_priv->usbc_analog_work);
 	pm_relax(fsa_priv->dev);
 	/* deregister from PMI */
 	power_supply_unreg_notifier(&fsa_priv->psy_nb);
