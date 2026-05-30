@@ -1079,7 +1079,8 @@ void iov_iter_kvec(struct iov_iter *i, int direction,
 			const struct kvec *kvec, unsigned long nr_segs,
 			size_t count)
 {
-	BUG_ON(!(direction & ITER_KVEC));
+	if (WARN_ON(!(direction & ITER_KVEC)))
+		return;
 	i->type = direction;
 	i->kvec = kvec;
 	i->nr_segs = nr_segs;
@@ -1092,7 +1093,8 @@ void iov_iter_bvec(struct iov_iter *i, int direction,
 			const struct bio_vec *bvec, unsigned long nr_segs,
 			size_t count)
 {
-	BUG_ON(!(direction & ITER_BVEC));
+	if (WARN_ON(!(direction & ITER_BVEC)))
+		return;
 	i->type = direction;
 	i->bvec = bvec;
 	i->nr_segs = nr_segs;
@@ -1105,7 +1107,8 @@ void iov_iter_pipe(struct iov_iter *i, int direction,
 			struct pipe_inode_info *pipe,
 			size_t count)
 {
-	BUG_ON(direction != ITER_PIPE);
+	if (WARN_ON(direction != ITER_PIPE))
+		return;
 	WARN_ON(pipe->nrbufs == pipe->buffers);
 	i->type = direction;
 	i->pipe = pipe;

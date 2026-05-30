@@ -156,20 +156,24 @@ static int fsa4480_usbc_event_changed(struct notifier_block *nb,
 	case POWER_SUPPLY_TYPEC_NONE:
 		if (atomic_read(&(fsa_priv->usbc_mode)) == mode.intval)
 			break; /* filter notifications received before */
-		atomic_set(&(fsa_priv->usbc_mode), mode.intval);
+		/* Do NOT update usbc_mode atomically here yet.
+		 * Defer it to the delayed work so that if the audio
+		 * adapter reconnects during the debounce window,
+		 * mod_delayed_work() in the SINK_AUDIO_ADAPTER case
+		 * cancels this work before usbc_mode is cleared. */
 
 		/*
-		 * Debounce disconnect by 1000ms: earphone wiggles during
-		 * gaming cause transient TYPEC_NONE events. If the audio
+		 * Debounce disconnect by 1500ms: earphone wiggles during
+		 * use cause transient TYPEC_NONE events. If the audio
 		 * adapter reconnects within the delay, mod_delayed_work()
 		 * above cancels this pending work and audio is never cut.
 		 */
-		dev_dbg(dev, "%s: disconnect detected, debouncing 1000ms\n",
+		dev_dbg(dev, "%s: disconnect detected, debouncing 1500ms\n",
 			__func__);
 		pm_stay_awake(fsa_priv->dev);
 		mod_delayed_work(system_freezable_wq,
 				 &fsa_priv->usbc_analog_work,
-				 msecs_to_jiffies(1000));
+				 msecs_to_jiffies(1500));
 		break;
 	default:
 		/*
@@ -223,6 +227,8 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 	dev_dbg(dev, "%s: setting GPIOs active = %d\n",
 		__func__, mode.intval != POWER_SUPPLY_TYPEC_NONE);
 
+	dev_dbg(dev, "%s: USB mode %d\n", __func__, mode.intval);
+
 	switch (mode.intval) {
 	/* add all modes FSA should notify for in here */
 	case POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER:
@@ -266,6 +272,9 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 			gpio_direction_output(fsa_priv->hs_det_pin, 0);
 		}
 #endif /* OPLUS_ARCH_EXTENDS */
+		/* Mark that we're in audio mode */
+		atomic_set(&(fsa_priv->usbc_mode),
+			   POWER_SUPPLY_TYPEC_SINK_AUDIO_ADAPTER);
 		break;
 	case POWER_SUPPLY_TYPEC_NONE:
 #ifdef OPLUS_ARCH_EXTENDS
@@ -280,6 +289,9 @@ static int fsa4480_usbc_analog_setup_switches(struct fsa4480_priv *fsa_priv)
 
 		/* deactivate switches */
 		fsa4480_usbc_update_settings(fsa_priv, 0x18, 0x98);
+		/* Now mark disconnected */
+		atomic_set(&(fsa_priv->usbc_mode),
+			   POWER_SUPPLY_TYPEC_NONE);
 		break;
 	default:
 		/*

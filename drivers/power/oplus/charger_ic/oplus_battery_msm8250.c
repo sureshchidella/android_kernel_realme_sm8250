@@ -6741,17 +6741,11 @@ void smblib_usb_plugin_locked(struct smb_charger *chg)
 	smblib_dbg(chg, PR_INTERRUPT, "IRQ: usbin-plugin %s\n", vbus_rising ? "attached" : "detached");
 }
 
-#define USB_PLUGIN_DEBOUNCE_MS 1500
-static void oplus_usb_plugin_debounce_work(struct work_struct *work)
+/* No-op stub: usb_plugin_work is no longer scheduled (USB plugin
+ * is handled directly in the IRQ handler for proper timing), but
+ * the delayed_work struct still exists in the header. */
+static void oplus_usb_plugin_noop_work(struct work_struct *work)
 {
-	struct smb_charger *chg = container_of(work, struct smb_charger,
-						usb_plugin_work.work);
-
-	printk(KERN_ERR "[OPLUS_CHG][%s]: debounced usb_plugin firing\n", __func__);
-	if (chg->pd_hard_reset)
-		smblib_usb_plugin_hard_reset_locked(chg);
-	else
-		smblib_usb_plugin_locked(chg);
 }
 
 irqreturn_t usb_plugin_irq_handler(int irq, void *data)
@@ -6771,12 +6765,13 @@ irqreturn_t usb_plugin_irq_handler(int irq, void *data)
 	}
 #endif /*OPLUS_FEATURE_CHG_BASIC*/
 
-	/* Debounce: absorb rapid VBUS toggling during earphone CC bouncing.
-	 * Each new IRQ cancels the previous pending work, so only the
-	 * final settled VBUS state triggers smblib_usb_plugin_locked(). */
-	cancel_delayed_work(&chg->usb_plugin_work);
-	schedule_delayed_work(&chg->usb_plugin_work,
-			      msecs_to_jiffies(USB_PLUGIN_DEBOUNCE_MS));
+	/* Process USB plugin/unplug immediately — USB negotiation requires
+	 * prompt handling. Earphone stability is handled in the TypeC CC
+	 * state change and FSA4480 layers instead. */
+	if (chg->pd_hard_reset)
+		smblib_usb_plugin_hard_reset_locked(chg);
+	else
+		smblib_usb_plugin_locked(chg);
 
 	return IRQ_HANDLED;
 }
@@ -7544,7 +7539,12 @@ irqreturn_t typec_state_change_irq_handler(int irq, void *data)
 	typec_mode = smblib_get_prop_typec_mode(chg);
 	if (chg->sink_src_mode != UNATTACHED_MODE && (typec_mode != chg->typec_mode))
 		smblib_handle_rp_change(chg, typec_mode);
-	chg->typec_mode = typec_mode;
+	/* Defer setting typec_mode to NONE — keep the previous connected
+	 * mode visible to FSA4480 and other consumers during the debounce
+	 * window. This prevents transient CC bounces from tearing down
+	 * the audio switch path. Only update immediately for connects. */
+	if (typec_mode != POWER_SUPPLY_TYPEC_NONE)
+		chg->typec_mode = typec_mode;
 #ifdef OPLUS_CUSTOM_OP_DEF
 	if (wireless_present) {
 		if (typec_mode == POWER_SUPPLY_TYPEC_NONE) // If nothing connected enable bypass vsafe for OTG detection
@@ -7558,8 +7558,8 @@ irqreturn_t typec_state_change_irq_handler(int irq, void *data)
 
 #ifdef OPLUS_FEATURE_CHG_BASIC //Fanhong.Kong@ProDrv.CHG,add 2018/06/02 for SVOOC OTG
 	if (oplus_is_use_external_boost() || (chip->vbatt_num == 2)) {
-		if (chg->typec_mode == POWER_SUPPLY_TYPEC_SINK ||
-		    chg->typec_mode == POWER_SUPPLY_TYPEC_SINK_POWERED_CABLE) {
+		if (typec_mode == POWER_SUPPLY_TYPEC_SINK ||
+		    typec_mode == POWER_SUPPLY_TYPEC_SINK_POWERED_CABLE) {
 			pr_info("%s: chg->typec_mode = SINK,Disable APSD!\n", __func__);
 			smblib_apsd_enable(chg, false);
 		}
@@ -7567,14 +7567,14 @@ irqreturn_t typec_state_change_irq_handler(int irq, void *data)
 #endif /*OPLUS_FEATURE_CHG_BASIC*/
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
-	current_status = (chg->typec_mode >= POWER_SUPPLY_TYPEC_SINK &&
-			  chg->typec_mode <= POWER_SUPPLY_TYPEC_POWERED_CABLE_ONLY);
+	current_status = (typec_mode >= POWER_SUPPLY_TYPEC_SINK &&
+			  typec_mode <= POWER_SUPPLY_TYPEC_POWERED_CABLE_ONLY);
 	if (dfp_status ^ current_status) {
 		dfp_status = current_status;
 		printk(KERN_ERR "!!!!! smblib_handle_typec_cc_state_change: [%d], mode[%d]\n", dfp_status,
-		       chg->typec_mode);
+		       typec_mode);
 	}
-	if (chg->typec_mode != POWER_SUPPLY_TYPEC_NONE) {
+	if (typec_mode != POWER_SUPPLY_TYPEC_NONE) {
 		oplus_wake_up_usbtemp_thread();
 	} else {
 		if (chip)
@@ -7583,12 +7583,20 @@ irqreturn_t typec_state_change_irq_handler(int irq, void *data)
 #endif
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
-	/* CC role changes are handled exclusively by the debounced GPIO ccdetect_work.
-	 * Calling oplus_ccdetect_disable() here on transient PMIC disconnects
-	 * forces Sink-only mode and permanently kills USB-C earphone detection. */
+	/* Restore ccdetect_disable logic from stock Entropy-1.2.
+	 * Only disable when the physical GPIO confirms disconnect (level=1)
+	 * AND typec is not present. The ccdetect_work debounce handles
+	 * the earphone stability — this just prevents stuck state. */
+	if (typec_mode == POWER_SUPPLY_TYPEC_NONE &&
+	    chg->typec_present == false &&
+	    gpio_get_value(chg->ccdetect_gpio) == 1) {
+		if (oplus_ccdetect_get_power_role() != POWER_SUPPLY_TYPEC_PR_SINK &&
+		    oplus_get_otg_switch_status() == false)
+			oplus_ccdetect_disable();
+	}
 #endif
 #ifdef OPLUS_FEATURE_CHG_BASIC
-	if (chg->typec_mode != POWER_SUPPLY_TYPEC_NONE) {
+	if (typec_mode != POWER_SUPPLY_TYPEC_NONE) {
 		cancel_delayed_work(&chg->typec_disable_cmd_work);
 		/* Connected: cancel any pending disconnect notification */
 		cancel_delayed_work(&chg->typec_disconnect_work);
@@ -7599,12 +7607,14 @@ irqreturn_t typec_state_change_irq_handler(int irq, void *data)
 		   smblib_typec_mode_name[chg->typec_mode]);
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
-	if (chg->typec_mode == POWER_SUPPLY_TYPEC_NONE) {
-		/* Defer disconnect notification to absorb CC line bouncing.
-		 * If the CC line recovers within 1500ms, the notification is
-		 * cancelled and the USB/audio stack is never disturbed. */
+	if (typec_mode == POWER_SUPPLY_TYPEC_NONE) {
+		/* Defer both typec_mode update AND power_supply notification
+		 * to absorb CC line bouncing from earphone wiggles.
+		 * If CC recovers within 500ms, the disconnect work is cancelled
+		 * and audio/USB is never disturbed. 500ms is enough to absorb
+		 * mechanical bounces while keeping USB responsive. */
 		schedule_delayed_work(&chg->typec_disconnect_work,
-				      msecs_to_jiffies(1500));
+				      msecs_to_jiffies(500));
 	} else {
 		power_supply_changed(chg->usb_psy);
 	}
@@ -8335,9 +8345,22 @@ static void oplus_typec_disconnect_work(struct work_struct *work)
 {
 	struct smb_charger *chg = container_of(work, struct smb_charger,
 					       typec_disconnect_work.work);
+	int typec_mode;
 
-	printk(KERN_ERR "[OPLUS_CHG][%s]: debounced typec disconnect firing\n", __func__);
-	if (chg->typec_mode == POWER_SUPPLY_TYPEC_NONE) {
+	/* Re-read the actual hardware state after debounce */
+	typec_mode = smblib_get_prop_typec_mode(chg);
+	printk(KERN_ERR "[OPLUS_CHG][%s]: debounce done, hw typec_mode=%d\n",
+	       __func__, typec_mode);
+
+	if (typec_mode == POWER_SUPPLY_TYPEC_NONE) {
+		/* Confirmed real disconnect — now update typec_mode and notify */
+		chg->typec_mode = POWER_SUPPLY_TYPEC_NONE;
+		power_supply_changed(chg->usb_psy);
+	} else {
+		/* CC recovered during debounce — earphone is still connected.
+		 * Update typec_mode to the current (reconnected) state and
+		 * notify so the stack sees the correct mode. */
+		chg->typec_mode = typec_mode;
 		power_supply_changed(chg->usb_psy);
 	}
 }
@@ -9453,7 +9476,9 @@ int smblib_init(struct smb_charger *chg)
 #ifdef OPLUS_FEATURE_CHG_BASIC
 	INIT_DELAYED_WORK(&chg->recovery_suspend_work, oplus_recovery_suspend_work);
 	INIT_DELAYED_WORK(&chg->ccdetect_work, oplus_ccdetect_work);
-	INIT_DELAYED_WORK(&chg->usb_plugin_work, oplus_usb_plugin_debounce_work);
+	/* usb_plugin_work is no longer used (USB plugin handled directly),
+	 * but the struct field exists in the header so we init it safely. */
+	INIT_DELAYED_WORK(&chg->usb_plugin_work, oplus_usb_plugin_noop_work);
 	INIT_DELAYED_WORK(&chg->typec_disconnect_work, oplus_typec_disconnect_work);
 	INIT_DELAYED_WORK(&usbtemp_recover_work, oplus_usbtemp_recover_work);
 	INIT_DELAYED_WORK(&chg->wired_in_work, oplus_wired_conn_int_work);
